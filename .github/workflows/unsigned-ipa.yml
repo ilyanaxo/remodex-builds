@@ -1,0 +1,82 @@
+name: Build Remodex unsigned IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Immutable application source commit
+        required: true
+        default: 34566df38f6d19ffd75738b295470c9b33562f22
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remodex-unsigned-ipa
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 55
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      REMODEX_REQUIRE_SWIFT_CHECKS: "1"
+    steps:
+      - name: Checkout build tooling
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate source reference
+        shell: bash
+        run: '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]'
+
+      - name: Checkout immutable application source
+        uses: actions/checkout@v4
+        with:
+          repository: ilyanaxo/remodex
+          ref: ${{ inputs.source_sha }}
+          path: source
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate and archive the same revision
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/remodex-result"
+          if bash run-build.sh "$SOURCE_SHA" "$RUNNER_TEMP/remodex-result" > "$RUNNER_TEMP/remodex-result/build.log" 2>&1; then
+            echo "The source checks, Apple target compilation, and unsigned IPA inspection passed."
+          else
+            echo "Build failed. Encrypted diagnostics are available in the artifact."
+            exit 1
+          fi
+
+      - name: Encrypt artifact and diagnostics for the recipient
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/remodex-result"
+          crypto_prefix="$(brew --prefix openssl@3)"
+          if [[ ! -x "$crypto_prefix/bin/openssl" ]]; then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install openssl@3
+            crypto_prefix="$(brew --prefix openssl@3)"
+          fi
+          tar -czf "$RUNNER_TEMP/remodex-result.tar.gz" -C "$RUNNER_TEMP/remodex-result" .
+          "$crypto_prefix/bin/openssl" cms -encrypt -binary -aes-256-gcm \
+            -in "$RUNNER_TEMP/remodex-result.tar.gz" \
+            -out "$RUNNER_TEMP/remodex-result.cms" -outform DER artifact-recipient.pem
+
+      - name: Upload encrypted result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remodex-${{ inputs.source_sha }}-encrypted
+          path: ${{ runner.temp }}/remodex-result.cms
+          retention-days: 1
+          if-no-files-found: error
