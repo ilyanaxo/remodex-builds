@@ -8,6 +8,10 @@ The archive-only mode runs the current Swift recovery regression, compiles the
 device app and widget, and inspects the resulting IPA. Its manifest records that
 validation scope separately from the full workflow.
 
+Device-only mode compiles the device app and widget and verifies the unsigned
+IPA without running the separate test harnesses. This scope is also recorded in
+the artifact manifest.
+
 Application sources are checked out with a repository-scoped, read-only deploy
 key. Build output and diagnostics are encrypted to the supplied public
 certificate before artifact upload. The private decryption key is not stored in

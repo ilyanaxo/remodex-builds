@@ -10,9 +10,11 @@ cd "$source_dir"
 bash CodexMobile/scripts/check-source-revision.sh "$source_sha"
 xcodebuild -version
 xcrun --find swiftc
-if [[ "${BUILD_MODE:-full}" == "archive" ]]; then
-  echo "Checking the current Swift recovery regression." >&3
-  node --test phodex-bridge/test/ios-prepared-send.test.js
+if [[ "${BUILD_MODE:-full}" == "archive" || "${BUILD_MODE:-full}" == "device" ]]; then
+  if [[ "$BUILD_MODE" == "archive" ]]; then
+    echo "Checking the current Swift recovery regression." >&3
+    node --test phodex-bridge/test/ios-prepared-send.test.js
+  fi
   echo "Archiving the iPhone application and widget." >&3
   bash CodexMobile/scripts/check-source-revision.sh "$source_sha"
   bash CodexMobile/scripts/build-unsigned-ipa.sh "$source_sha"
@@ -20,11 +22,16 @@ if [[ "${BUILD_MODE:-full}" == "archive" ]]; then
   cp build/unsigned-ipa/build-metadata.json "$result_dir/"
   python3 - "$result_dir/build-metadata.json" <<'PY'
 import json
+import os
 from pathlib import Path
 import sys
 p = Path(sys.argv[1])
 data = json.loads(p.read_text())
-data["validationScope"] = "prepared-send Swift regression, device archive, unsigned IPA inspection"
+data["validationScope"] = (
+    "prepared-send Swift regression, device archive, unsigned IPA inspection"
+    if os.environ.get("BUILD_MODE") == "archive"
+    else "device app and widget compilation, source revision check, unsigned IPA inspection"
+)
 p.write_text(json.dumps(data, indent=2) + "\n")
 PY
   exit 0

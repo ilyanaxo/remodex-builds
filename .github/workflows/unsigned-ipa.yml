@@ -12,12 +12,17 @@ on:
         type: boolean
         required: false
         default: false
+      device_only:
+        description: Compile and inspect the device IPA without the separate test harnesses
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: remodex-unsigned-ipa-${{ inputs.archive_only && 'archive' || 'full' }}
+  group: remodex-unsigned-ipa-${{ inputs.device_only && 'device' || inputs.archive_only && 'archive' || 'full' }}
   cancel-in-progress: false
 
 jobs:
@@ -27,7 +32,7 @@ jobs:
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
       REMODEX_REQUIRE_SWIFT_CHECKS: "1"
-      BUILD_MODE: ${{ inputs.archive_only && 'archive' || 'full' }}
+      BUILD_MODE: ${{ inputs.device_only && 'device' || inputs.archive_only && 'archive' || 'full' }}
     steps:
       - name: Checkout build tooling
         uses: actions/checkout@v4
