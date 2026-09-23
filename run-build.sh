@@ -37,6 +37,7 @@ PY
   exit 0
 fi
 
+echo "Running bridge, relay, package and Swift checks." >&3
 npm ci --ignore-scripts --prefix phodex-bridge
 npm ci --ignore-scripts --prefix relay
 npm test --prefix phodex-bridge
@@ -47,6 +48,7 @@ npm test --prefix relay
 bash CodexMobile/scripts/check-markdown-append-correctness.sh
 python3 -B -m unittest discover -s CodexMobile/scripts -p 'test_verify_unsigned_ipa.py'
 
+echo "Compiling the app, widget and test targets without running Xcode tests." >&3
 xcodebuild \
   -project "$source_dir/CodexMobile/CodexMobile.xcodeproj" \
   -scheme CodexMobile -configuration Release \
@@ -61,6 +63,7 @@ for product in CodexMobile.app CodexMobileTests.xctest CodexMobileUITests.xctest
   test -n "$(find "$products" -type d -name "$product" -print -quit)"
 done
 
+echo "Compiling the menu bar target." >&3
 xcodebuild \
   -project "$source_dir/CodexMobile/CodexMobile.xcodeproj" \
   -scheme RemodexMenuBar -configuration Release \
@@ -69,6 +72,7 @@ xcodebuild \
   build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
 test -d "$RUNNER_TEMP/remodex-menu-compile/Build/Products/Release/RemodexMenuBar.app"
 
+echo "Archiving and inspecting the iPhone IPA." >&3
 bash CodexMobile/scripts/check-source-revision.sh "$source_sha"
 bash CodexMobile/scripts/build-unsigned-ipa.sh "$source_sha"
 cp build/unsigned-ipa/remodex-unsigned-release.ipa "$result_dir/"
