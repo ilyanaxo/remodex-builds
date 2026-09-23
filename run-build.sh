@@ -10,6 +10,26 @@ cd "$source_dir"
 bash CodexMobile/scripts/check-source-revision.sh "$source_sha"
 xcodebuild -version
 xcrun --find swiftc
+if [[ "${BUILD_MODE:-full}" == "archive" ]]; then
+  echo "Checking the current Swift recovery regression." >&3
+  node --test phodex-bridge/test/ios-prepared-send.test.js
+  echo "Archiving the iPhone application and widget." >&3
+  bash CodexMobile/scripts/check-source-revision.sh "$source_sha"
+  bash CodexMobile/scripts/build-unsigned-ipa.sh "$source_sha"
+  cp build/unsigned-ipa/remodex-unsigned-release.ipa "$result_dir/"
+  cp build/unsigned-ipa/build-metadata.json "$result_dir/"
+  python3 - "$result_dir/build-metadata.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+data = json.loads(p.read_text())
+data["validationScope"] = "prepared-send Swift regression, device archive, unsigned IPA inspection"
+p.write_text(json.dumps(data, indent=2) + "\n")
+PY
+  exit 0
+fi
+
 npm ci --ignore-scripts --prefix phodex-bridge
 npm ci --ignore-scripts --prefix relay
 npm test --prefix phodex-bridge

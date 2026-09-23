@@ -7,12 +7,17 @@ on:
         description: Immutable application source commit
         required: true
         default: 34566df38f6d19ffd75738b295470c9b33562f22
+      archive_only:
+        description: Build the device IPA after the current Swift regression check
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: remodex-unsigned-ipa
+  group: remodex-unsigned-ipa-${{ inputs.archive_only && 'archive' || 'full' }}
   cancel-in-progress: false
 
 jobs:
@@ -22,6 +27,7 @@ jobs:
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
       REMODEX_REQUIRE_SWIFT_CHECKS: "1"
+      BUILD_MODE: ${{ inputs.archive_only && 'archive' || 'full' }}
     steps:
       - name: Checkout build tooling
         uses: actions/checkout@v4
@@ -46,12 +52,13 @@ jobs:
         with:
           node-version: 20
 
-      - name: Validate and archive the same revision
+      - name: Build the unsigned IPA
+        timeout-minutes: 35
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/remodex-result"
-          if bash run-build.sh "$SOURCE_SHA" "$RUNNER_TEMP/remodex-result" > "$RUNNER_TEMP/remodex-result/build.log" 2>&1; then
-            echo "The source checks, Apple target compilation, and unsigned IPA inspection passed."
+          if bash run-build.sh "$SOURCE_SHA" "$RUNNER_TEMP/remodex-result" 3>&1 > "$RUNNER_TEMP/remodex-result/build.log" 2>&1; then
+            echo "The selected source checks and unsigned IPA inspection passed."
           else
             echo "Build failed. Encrypted diagnostics are available in the artifact."
             exit 1
