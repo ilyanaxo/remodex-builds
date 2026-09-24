@@ -7,7 +7,11 @@ tooling_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source_dir="$tooling_dir/source"
 derived_dir="$RUNNER_TEMP/remodex-live-replay-build"
 device_id=""
+launcher_pid=""
 cleanup() {
+  if [[ -n "$launcher_pid" ]]; then
+    kill "$launcher_pid" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$device_id" ]]; then
     xcrun simctl shutdown "$device_id" >/dev/null 2>&1 || true
     xcrun simctl delete "$device_id" >/dev/null 2>&1 || true
@@ -54,27 +58,43 @@ app_path="$derived_dir/Build/Products/Release-iphonesimulator/CodexMobile.app"
 test -d "$app_path"
 bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_path/Info.plist")"
 xcrun simctl install "$device_id" "$app_path"
-echo "Launching the isolated Claude event replay in the application." >&3
-SIMCTL_CHILD_REMODEX_PROBE_SOURCE_SHA="$source_sha" \
-SIMCTL_CHILD_REMODEX_SOURCE_SHA="$source_sha" \
-xcrun simctl launch --terminate-running-process "$device_id" "$bundle_id" -RemodexLiveReplay
 app_data="$(xcrun simctl get_app_container "$device_id" "$bundle_id" data)"
-python3 - "$app_data" "$result_dir" <<'PY'
+for variant in baseline stable-indicator; do
+  echo "Launching isolated application replay: $variant." >&3
+  replay_args=(-RemodexLiveReplay)
+  if [[ "$variant" == "stable-indicator" ]]; then
+    replay_args+=(-RemodexLiveReplayStableIndicator)
+  fi
+  rm -f "$app_data/Documents/remodex-live-replay-diagnostic.json"
+  SIMCTL_CHILD_REMODEX_PROBE_SOURCE_SHA="$source_sha" \
+  SIMCTL_CHILD_REMODEX_SOURCE_SHA="$source_sha" \
+  xcrun simctl launch --console --terminate-running-process "$device_id" "$bundle_id" \
+    "${replay_args[@]}" > "$result_dir/$variant-console.log" 2>&1 &
+  launcher_pid=$!
+  python3 - "$app_data" "$result_dir" "$variant" <<'PY'
 from pathlib import Path
 import shutil
 import sys
 import time
-root, result = map(Path, sys.argv[1:])
+root, result = map(Path, sys.argv[1:3])
+variant = sys.argv[3]
 deadline = time.monotonic() + 90
 while time.monotonic() < deadline:
     candidates = list((root / "Documents").glob("*live*replay*.json"))
     if candidates:
         for candidate in candidates:
-            shutil.copyfile(candidate, result / candidate.name)
+            shutil.copyfile(candidate, result / (variant + ".json"))
         break
     time.sleep(1)
 else:
     raise SystemExit("The application did not emit its bounded replay result")
 PY
-xcrun simctl io "$device_id" screenshot "$result_dir/live-replay.png"
+  sleep 3
+  xcrun simctl io "$device_id" screenshot "$result_dir/$variant.png"
+  sleep 5
+  xcrun simctl io "$device_id" screenshot "$result_dir/$variant-late.png"
+  xcrun simctl terminate "$device_id" "$bundle_id"
+  wait "$launcher_pid" || true
+  launcher_pid=""
+done
 bash CodexMobile/scripts/check-source-revision.sh "$source_sha"
