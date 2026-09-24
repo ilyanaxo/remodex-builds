@@ -63,6 +63,11 @@ for product in CodexMobile.app CodexMobileTests.xctest CodexMobileUITests.xctest
   test -n "$(find "$products" -type d -name "$product" -print -quit)"
 done
 
+echo "Verifying visible live replies in the isolated iOS application." >&3
+mkdir -p "$result_dir/live-replay"
+REPLAY_APP_PATH="$products/Release-iphonesimulator/CodexMobile.app" \
+  bash "$tooling_dir/run-live-replay.sh" "$source_sha" "$result_dir/live-replay"
+
 echo "Compiling the menu bar target." >&3
 xcodebuild \
   -project "$source_dir/CodexMobile/CodexMobile.xcodeproj" \

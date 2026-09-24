@@ -22,13 +22,15 @@ trap cleanup EXIT
 cd "$source_dir"
 bash CodexMobile/scripts/check-source-revision.sh "$source_sha"
 xcodebuild -version
-echo "Compiling the isolated iOS application without executing Xcode tests." >&3
-xcodebuild -project "$source_dir/CodexMobile/CodexMobile.xcodeproj" \
-  -scheme CodexMobile -configuration Release \
-  -destination "generic/platform=iOS Simulator" \
-  -derivedDataPath "$derived_dir" build ARCHS=arm64 \
-  'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) REMODEX_PERFORMANCE_TESTING' \
-  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+if [[ -z "${REPLAY_APP_PATH:-}" ]]; then
+  echo "Compiling the isolated iOS application without executing Xcode tests." >&3
+  xcodebuild -project "$source_dir/CodexMobile/CodexMobile.xcodeproj" \
+    -scheme CodexMobile -configuration Release \
+    -destination "generic/platform=iOS Simulator" \
+    -derivedDataPath "$derived_dir" build ARCHS=arm64 \
+    'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) REMODEX_PERFORMANCE_TESTING' \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+fi
 
 xcrun simctl list runtimes --json > "$RUNNER_TEMP/remodex-replay-runtimes.json"
 xcrun simctl list devicetypes --json > "$RUNNER_TEMP/remodex-replay-devices.json"
@@ -54,16 +56,16 @@ device_id="$(xcrun simctl create "Remodex live replay ${source_sha:0:7}" \
   "$(cat "$RUNNER_TEMP/remodex-replay-runtime-id")")"
 xcrun simctl boot "$device_id"
 xcrun simctl bootstatus "$device_id" -b
-app_path="$derived_dir/Build/Products/Release-iphonesimulator/CodexMobile.app"
+app_path="${REPLAY_APP_PATH:-$derived_dir/Build/Products/Release-iphonesimulator/CodexMobile.app}"
 test -d "$app_path"
 bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_path/Info.plist")"
 xcrun simctl install "$device_id" "$app_path"
 app_data="$(xcrun simctl get_app_container "$device_id" "$bundle_id" data)"
-for variant in baseline stable-indicator; do
+for variant in prepared late-ack; do
   echo "Launching isolated application replay: $variant." >&3
   replay_args=(-RemodexLiveReplay)
-  if [[ "$variant" == "stable-indicator" ]]; then
-    replay_args+=(-RemodexLiveReplayStableIndicator)
+  if [[ "$variant" == "late-ack" ]]; then
+    replay_args+=(-RemodexLiveReplayLateAck)
   fi
   rm -f "$app_data/Documents/remodex-live-replay-diagnostic.json"
   SIMCTL_CHILD_REMODEX_PROBE_SOURCE_SHA="$source_sha" \
@@ -73,6 +75,7 @@ for variant in baseline stable-indicator; do
   launcher_pid=$!
   python3 - "$app_data" "$result_dir" "$variant" <<'PY'
 from pathlib import Path
+import json
 import shutil
 import sys
 import time
@@ -97,4 +100,13 @@ PY
   wait "$launcher_pid" || true
   launcher_pid=""
 done
+python3 - "$result_dir" <<'PY'
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+for mode in ["prepared", "late-ack"]:
+    result = json.loads((root / (mode + ".json")).read_text())
+    assert result["status"] == "passed", (mode, result.get("failures"))
+PY
 bash CodexMobile/scripts/check-source-revision.sh "$source_sha"
