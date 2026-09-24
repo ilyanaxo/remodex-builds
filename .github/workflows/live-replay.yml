@@ -1,0 +1,66 @@
+name: Inspect iOS live replay
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Immutable application commit containing the opt-in replay fixture
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remodex-live-replay
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+    steps:
+      - name: Checkout build tooling
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate source reference
+        shell: bash
+        run: '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - name: Checkout immutable application source
+        uses: actions/checkout@v4
+        with:
+          repository: ilyanaxo/remodex
+          ref: ${{ inputs.source_sha }}
+          path: source
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Build and launch the isolated application replay
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/remodex-result"
+          if bash run-live-replay.sh "$SOURCE_SHA" "$RUNNER_TEMP/remodex-result" 3>&1 > "$RUNNER_TEMP/remodex-result/build.log" 2>&1; then
+            echo "The isolated application replay completed."
+          else
+            echo "The replay did not complete. Encrypted diagnostics are attached."
+            exit 1
+          fi
+      - name: Encrypt diagnostics for the recipient
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/remodex-result"
+          crypto_prefix="$(brew --prefix openssl@3)"
+          tar -czf "$RUNNER_TEMP/remodex-result.tar.gz" -C "$RUNNER_TEMP/remodex-result" .
+          "$crypto_prefix/bin/openssl" cms -encrypt -binary -aes-256-gcm \
+            -in "$RUNNER_TEMP/remodex-result.tar.gz" \
+            -out "$RUNNER_TEMP/remodex-result.cms" -outform DER artifact-recipient.pem
+      - name: Upload encrypted diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remodex-live-replay-${{ inputs.source_sha }}-encrypted
+          path: ${{ runner.temp }}/remodex-result.cms
+          retention-days: 1
+          if-no-files-found: error
